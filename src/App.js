@@ -960,6 +960,7 @@ export default function App(){
   const [selected,setSelected]=useState(null);
   const [showKickoff,setShowKickoff]=useState(false);
   const [showSearch,setShowSearch]=useState(false);
+  const [showDump,setShowDump]=useState(false);
   const [view,setView]=useState("dashboard");
   const [filter,setFilter]=useState(null);
   const [ownerFilter,setOwnerFilter]=useState("All");
