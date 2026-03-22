@@ -954,7 +954,184 @@ function ProjectCard({p,onClick,onUpdate}){
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
-export default function App(){
+async function parseGlobalDump(text, projects) {
+  const projectList = projects.map(p => `"${p.name}" (stage: ${p.stage}, owner: ${p.owner||"unassigned"})`).join("\n");
+  const prompt = `You are parsing a full product development meeting transcript for a KitchenAid accessories company.
+
+Known projects:
+${projectList}
+
+Meeting notes:
+"""
+${text}
+"""
+
+For each project mentioned, return a JSON array. Each item:
+{
+  "projectName": "exact name from the list above (fuzzy match ok)",
+  "summary": "1-2 sentence summary of what was discussed",
+  "whatChanged": "specific change or null",
+  "decisions": ["list of decisions"],
+  "risks": ["list of risks"],
+  "actions": ["list of action items"],
+  "people": ["people mentioned"],
+  "stageSignal": "new stage name if clearly indicated, or null",
+  "delayReasons": ["from: KA review delay, Tooling delay, Factory delay, Retailer decision delay, Design revision, Packaging change, Commercial uncertainty, Awaiting resources"],
+  "actionId": "best match from: ka_responded, north_star, retailer_commit, pkg_approved, await_ka, await_factory, await_retailer, design_revision, t1_sent, t2_sent, t3_sent, t4_sent, needs_decision, timeline_risk or null"
+}
+
+Only include projects actually mentioned. Return ONLY the JSON array, nothing else.`;
+
+  const resp = await fetch("/api/claude", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2000,
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+  const data = await resp.json();
+  try {
+    return JSON.parse((data.content?.[0]?.text || "[]").replace(/```json|```/g, "").trim());
+  } catch(e) { return []; }
+}
+
+function GlobalDumpModal({ projects, onClose, onUpdateAll }) {
+  const [text, setText] = React.useState("");
+  const [parsing, setParsing] = React.useState(false);
+  const [results, setResults] = React.useState(null);
+
+  const handleParse = async () => {
+    if (!text.trim()) return;
+    setParsing(true);
+    setResults(null);
+    const parsed = await parseGlobalDump(text, projects);
+    setResults(parsed);
+    setParsing(false);
+  };
+
+  const handleApplyAll = () => {
+    const updated = [...projects];
+    (results || []).forEach(r => {
+      const idx = updated.findIndex(p =>
+        p.name.toLowerCase().includes(r.projectName?.toLowerCase().split(" ")[0]) ||
+        r.projectName?.toLowerCase().includes(p.name.toLowerCase().split(" ")[0])
+      );
+      if (idx < 0) return;
+      const p = updated[idx];
+      const ts = new Date().toISOString();
+      const entry = {
+        id: Math.random().toString(36).slice(2,9), ts, type: "meeting",
+        text: r.summary || r.whatChanged || "Meeting update.",
+        stage: p.stage, flags: r.risks || [],
+        delayReasons: r.delayReasons || [],
+        meetingData: r, actionId: r.actionId || "meeting",
+      };
+      let np = { ...p, lastUpdated: ts, latestUpdate: r.whatChanged || r.summary || p.latestUpdate, history: [...(p.history||[]), entry] };
+      if (r.actionId === "await_ka") np.awaitingKA = true;
+      if (r.actionId === "ka_responded") np.awaitingKA = false;
+      if (r.actionId === "north_star") np.northStar = true;
+      if (r.actionId === "retailer_commit") np.retailerCommit = true;
+      if (r.actionId === "pkg_approved") np.pkgApproved = true;
+      updated[idx] = np;
+    });
+    onUpdateAll(updated);
+    onClose();
+  };
+
+  const matchedCount = (results||[]).filter(r =>
+    projects.find(p =>
+      p.name.toLowerCase().includes(r.projectName?.toLowerCase().split(" ")[0]) ||
+      r.projectName?.toLowerCase().includes(p.name.toLowerCase().split(" ")[0])
+    )
+  ).length;
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"20px"}} onClick={onClose}>
+      <div style={{background:"#FFFFFF",border:"1px solid #E5E7EB",borderRadius:"12px",width:"100%",maxWidth:"720px",maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 32px rgba(0,0,0,0.12)"}} onClick={e=>e.stopPropagation()}>
+
+        <div style={{padding:"18px 24px",borderBottom:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:"16px",color:"#111827"}}>Drop Meeting Notes</div>
+            <div style={{fontSize:"12px",color:"#9CA3AF",marginTop:"2px"}}>Paste your full meeting dump — AI matches projects and updates all at once</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#9CA3AF",fontSize:"22px",cursor:"pointer",lineHeight:1}}>×</button>
+        </div>
+
+        <div style={{padding:"20px 24px",overflowY:"auto",flex:1}}>
+          {!results ? (
+            <>
+              <textarea
+                style={{width:"100%",background:"#F9FAFB",border:"1px solid #E5E7EB",borderRadius:"8px",padding:"12px",fontSize:"13px",color:"#111827",fontFamily:"inherit",resize:"none",outline:"none",lineHeight:1.6,boxSizing:"border-box",minHeight:"260px"}}
+                value={text}
+                onChange={e=>setText(e.target.value)}
+                placeholder={`Paste your full Gemini transcript, call notes, or email thread here…\n\nExample:\nSoft Tools — Steve signed off on hang hole revision, moving to tooling next week\nRotary Grater — KA came back, packaging approved\nTrigger Scoop — T4 still being reworked, factory says 2 more weeks`}
+              />
+              <div style={{fontSize:"11px",color:"#9CA3AF",marginTop:"8px"}}>
+                {projects.length} active projects · AI will match by name and extract updates, decisions, risks, and actions
+              </div>
+            </>
+          ) : (
+            <div>
+              <div style={{fontSize:"12px",color:"#6B7280",marginBottom:"12px",fontWeight:600}}>
+                Found updates for <span style={{color:"#111827"}}>{results.length} project{results.length!==1?"s":""}</span> — review before applying
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+                {results.map((r,i) => {
+                  const matched = projects.find(p =>
+                    p.name.toLowerCase().includes(r.projectName?.toLowerCase().split(" ")[0]) ||
+                    r.projectName?.toLowerCase().includes(p.name.toLowerCase().split(" ")[0])
+                  );
+                  return (
+                    <div key={i} style={{background:"#F9FAFB",border:"1px solid #E5E7EB",borderRadius:"8px",padding:"12px 14px"}}>
+                      <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:"6px",flexWrap:"wrap"}}>
+                        <span style={{fontWeight:700,fontSize:"13px",color:"#111827"}}>{r.projectName}</span>
+                        {matched && <span style={{background:"#F3F4F6",color:"#6B7280",borderRadius:"4px",padding:"2px 7px",fontSize:"10px",fontWeight:600}}>{matched.stage}</span>}
+                        {r.stageSignal && r.stageSignal !== matched?.stage && <span style={{background:"#EDE9FE",color:"#5B21B6",borderRadius:"4px",padding:"2px 7px",fontSize:"10px",fontWeight:700}}>→ {r.stageSignal}</span>}
+                        {!matched && <span style={{background:"#FEF3C7",color:"#92400E",borderRadius:"4px",padding:"2px 7px",fontSize:"10px",fontWeight:600}}>No match</span>}
+                      </div>
+                      {r.summary && <div style={{fontSize:"12px",color:"#6B7280",marginBottom:"6px",lineHeight:1.4}}>{r.summary}</div>}
+                      <div style={{display:"flex",flexWrap:"wrap",gap:"4px"}}>
+                        {r.decisions?.length>0 && <span style={{background:"#D1FAE5",color:"#065F46",borderRadius:"4px",padding:"2px 7px",fontSize:"10px",fontWeight:600}}>{r.decisions.length} decision{r.decisions.length!==1?"s":""}</span>}
+                        {r.risks?.length>0 && <span style={{background:"#FEE2E2",color:"#991B1B",borderRadius:"4px",padding:"2px 7px",fontSize:"10px",fontWeight:600}}>{r.risks.length} risk{r.risks.length!==1?"s":""}</span>}
+                        {r.actions?.length>0 && <span style={{background:"#DBEAFE",color:"#1E40AF",borderRadius:"4px",padding:"2px 7px",fontSize:"10px",fontWeight:600}}>{r.actions.length} action{r.actions.length!==1?"s":""}</span>}
+                        {r.delayReasons?.map(d=><span key={d} style={{background:"#FEF3C7",color:"#92400E",borderRadius:"4px",padding:"2px 7px",fontSize:"10px",fontWeight:600}}>⚑ {d}</span>)}
+                        {r.people?.map(per=><span key={per} style={{background:"#F3F4F6",color:"#6B7280",borderRadius:"20px",padding:"2px 8px",fontSize:"10px"}}>{per}</span>)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{padding:"14px 24px",borderTop:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0,background:"#F9FAFB",borderRadius:"0 0 12px 12px"}}>
+          <button onClick={()=>{setResults(null);setText("");onClose();}} style={{background:"none",border:"1px solid #E5E7EB",color:"#9CA3AF",borderRadius:"7px",padding:"8px 16px",cursor:"pointer",fontSize:"12px",fontFamily:"inherit"}}>
+            Cancel
+          </button>
+          <div style={{display:"flex",gap:"8px"}}>
+            {!results ? (
+              <button onClick={handleParse} disabled={!text.trim()||parsing}
+                style={{background:text.trim()&&!parsing?"#2563EB":"#E5E7EB",border:"none",color:text.trim()&&!parsing?"white":"#9CA3AF",borderRadius:"7px",padding:"8px 20px",cursor:text.trim()&&!parsing?"pointer":"default",fontSize:"13px",fontWeight:700,fontFamily:"inherit"}}>
+                {parsing ? "Parsing…" : "Process Notes →"}
+              </button>
+            ) : (
+              <>
+                <button onClick={()=>setResults(null)} style={{background:"none",border:"1px solid #E5E7EB",color:"#6B7280",borderRadius:"7px",padding:"8px 16px",cursor:"pointer",fontSize:"12px",fontFamily:"inherit"}}>Back</button>
+                <button onClick={handleApplyAll} disabled={matchedCount===0}
+                  style={{background:"#16A34A",border:"none",color:"white",borderRadius:"7px",padding:"8px 20px",cursor:"pointer",fontSize:"13px",fontWeight:700,fontFamily:"inherit"}}>
+                  Apply {matchedCount} Update{matchedCount!==1?"s":""} ✓
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}export default function App(){
   const [projects,setProjects]=useState([]);
   const [loaded,setLoaded]=useState(false);
   const [selected,setSelected]=useState(null);
