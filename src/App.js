@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+  import React, { useState, useEffect, useCallback } from "react";
 
 const T = {
   bg:"#F5F7FA",card:"#FFFFFF",border:"#E5E7EB",divider:"#D1D5DB",
@@ -284,7 +284,7 @@ function HistoryPanel({history}){
 async function parseMeetingNotes(text,projectName){
   const prompt=`Parse meeting notes for KitchenAid project "${projectName}". Return ONLY JSON: {"summary":"1-2 sentences","whatChanged":"or null","decisions":[],"risks":[],"actions":[],"people":[],"stageSignal":"stage or null","delayReasons":[]}\nNotes: """${text}"""`;
   try{
-    const resp=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:600,messages:[{role:"user",content:prompt}]})});
+    const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":"sk-ant-YOUR-KEY-HERE","anthropic-version":"2023-06-01"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:600,messages:[{role:"user",content:prompt}]})});
     const data=await resp.json();
     return JSON.parse((data.content?.[0]?.text||"{}").replace(/```json|```/g,"").trim());
   }catch(e){return {};}
@@ -335,7 +335,7 @@ async function parseGlobalDump(text,projects){
   const projectList=projects.map(p=>`"${p.name}" (stage: ${p.stage}, owner: ${p.owner||"unassigned"})`).join("\n");
   const prompt=`You are parsing a full product development meeting transcript for a KitchenAid accessories company.\n\nKnown projects:\n${projectList}\n\nMeeting notes:\n"""\n${text}\n"""\n\nFor each project mentioned, return a JSON array. Each item:\n{"projectName":"exact name from list (fuzzy ok)","summary":"1-2 sentence summary","whatChanged":"specific change or null","decisions":[],"risks":[],"actions":[],"people":[],"stageSignal":"new stage or null","delayReasons":[],"actionId":"ka_responded|north_star|retailer_commit|pkg_approved|await_ka|await_factory|design_revision|t1_sent|t2_sent|t3_sent|t4_sent|needs_decision|timeline_risk or null"}\n\nOnly include projects actually mentioned. Return ONLY the JSON array.`;
   try{
-    const resp=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,messages:[{role:"user",content:prompt}]})});
+    const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":"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","anthropic-version":"2023-06-01"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,messages:[{role:"user",content:prompt}]})});
     const data=await resp.json();
     return JSON.parse((data.content?.[0]?.text||"[]").replace(/```json|```/g,"").trim());
   }catch(e){return [];}
